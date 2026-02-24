@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TelemetryModule } from './telemetry/telemetry.module';
@@ -9,14 +9,18 @@ import { TelemetryModule } from './telemetry/telemetry.module';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         type: 'postgres',
-        // Usamos la URL completa porque Neon ya incluye SSL y parámetros en ella
-        url: config.get<string>('DATABASE_URL'), 
+        host: configService.get<string>('DB_HOST') || 'localhost',
+        port: configService.get<number>('DB_PORT') || 5432,
+        username: configService.get<string>('DB_USER'),
+        password: configService.get<string>('DB_PASS'),
+        database: configService.get<string>('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: true, // ¡Ojo! En producción real se usan migraciones, pero para este proyecto está perfecto
-        ssl: {
-          rejectUnauthorized: false, // Esto permite la conexión segura con Neon
+        synchronize: true,
+        ssl: false,
+        extra: {
+          ssl: false,
         },
       }),
     }),

@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { createClient } from 'redis';
+
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { EngineModelType, Vehicle } from './entities/vehicle.entity';
@@ -13,8 +13,6 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TelemetryService implements OnModuleInit {
-  private redisClient;
-
   constructor(
     @InjectRepository(Vehicle) private vehicleRepo: Repository<Vehicle>,
     @InjectRepository(Telemetry) private telemetryRepo: Repository<Telemetry>,
@@ -26,31 +24,6 @@ export class TelemetryService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const redisUrl =
-      this.configService.get<string>('REDIS_URL') || 'redis://localhost:6379';
-    this.redisClient = createClient({ url: redisUrl });
-
-    this.redisClient.on('error', (err) =>
-      console.log('Redis Client Error', err),
-    );
-
-    await this.redisClient.connect();
-
-    // SOLUCIÓN AL ERROR MISCONF:
-    // Forzamos a Redis a permitir escritura aunque falle el guardado en disco
-    try {
-      await this.redisClient.configSet('stop-writes-on-bgsave-error', 'no');
-      console.log(
-        '🚀 SYSTEM_CHECK: Redis connection & config bypass established',
-      );
-    } catch (err) {
-      console.log(
-        console.log(
-          'ℹ️ Redis Config: Usando configuración por defecto de la nube.',
-        ),
-        err.message,
-      );
-    }
     setInterval(async () => {
       const vehicles = await this.vehicleRepo.find();
       for (const v of vehicles) {
@@ -61,12 +34,6 @@ export class TelemetryService implements OnModuleInit {
   }
 
   async getUnifiedData(unitId: string) {
-    const cacheKey = `live_status:${unitId}`;
-
-    // 1. INTENTAR CACHÉ (Redis)
-    const cached = await this.redisClient.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-
     // 2. OBTENER DATOS REALES (Ejemplo con OpenWeather)
     // Usamos coordenadas fijas por ahora, luego vendrán de Smartcar
     const weather = await this.getRealWeather(-34.6037, -58.3816);
@@ -91,7 +58,6 @@ export class TelemetryService implements OnModuleInit {
     };
 
     // 4. GUARDAR EN REDIS (TTL de 2 segundos para no saturar APIs)
-    await this.redisClient.set(cacheKey, JSON.stringify(payload), { EX: 2 });
 
     // 5. PERSISTIR EN POSTGRES (Asíncrono para no bloquear)
     this.persistToPostgres(unitId, payload);
@@ -169,21 +135,6 @@ export class TelemetryService implements OnModuleInit {
     return await Promise.all(
       vehicles.map(async (v) => {
         // 1. Buscamos el objeto vivo en Redis
-        const liveDataRaw = await this.redisClient.get(
-          `live_status:${v.unitId}`,
-        );
-
-        if (liveDataRaw) {
-          const liveData = JSON.parse(liveDataRaw);
-          return {
-            ...v,
-            // Llenamos las coordenadas con lo que hay en Redis (Tiempo real)
-            lastLat: liveData.location.lat,
-            lastLng: liveData.location.lng,
-            // Pasamos el objeto completo de métricas
-            currentMetrics: liveData,
-          };
-        }
 
         // Si no hay nada en Redis, devolvemos el vehículo base
         return {
